@@ -1,0 +1,310 @@
+<mujoco model="swing_robot">
+  <!-- Second physical redesign (see README section documenting this), built
+       from the user's real-world hardware dimensions rather than the earlier
+       visual-diagram estimates. Structurally different from the previous
+       model: the rope now attaches RIGIDLY to a combined seat/upper-leg
+       unit at an OFFSET point along its length (not at the hip hinge
+       itself), and the hip/knee hinges live at opposite ends of that unit.
+       This was a "fresh model, not a continuation" promotion --
+       archive_old_model.py already moved the prior training lineage aside
+       (111.6M steps archived), so train.py takes the fresh-start branch.
+
+       Body tree, top to bottom:
+         pivot -> swing_arm (rope, swing_hinge) -> seat (RIGID, no joint)
+           -> torso (lean_hinge) -> head (RIGID, no joint -- see head's
+              comment below for why "fixed hinge" isn't literally a
+              zero-range joint here)
+           -> lower_leg (knee_hinge) -> leg_mass (position tunable)
+
+       Key design point (per the user, "probably the most critical
+       modification"): the rope attaches to the seat/upper-leg unit at a
+       point BETWEEN the hip and knee hinges, not at either end -- 0.06m
+       from the hip (lean_hinge), 0.14m from the knee (knee_hinge), summing
+       to the unit's own 0.20m length.
+
+       Rider's arms are still deliberately NOT modeled -- per the user,
+       they're not meant to do any work (grip only), so their length is
+       physically irrelevant to the dynamics and there's nothing to gain
+       from representing them.
+
+       CORRECTED (see the seat body's own comment below for the full
+       explanation): the seat/upper-leg unit runs PERPENDICULAR to the
+       rope (local X), not inline with it (local Z) -- an error in the
+       original text description of this geometry that went unnoticed
+       until after a training round on the inline version. Only the
+       seat/torso/lower_leg attachment axis changed; the rope itself, the
+       rope attachment point, and every joint's range/axis/damping are
+       unaffected.
+  -->
+
+  <option gravity="0 0 -9.81" timestep="0.005"/>
+
+  <default>
+    <joint damping="0.02"/>
+    <geom rgba="0.7 0.7 0.7 1"/>
+  </default>
+
+  <worldbody>
+    <light diffuse="0.8 0.8 0.8" pos="0 0 5" dir="0 0 -1"/>
+    <geom name="ground" type="plane" size="5 5 0.1" rgba="0.85 0.9 0.85 1"/>
+
+    <!-- Fixed pivot: the top bar of the swing set -->
+    <body name="pivot" pos="0 0 3">
+      <geom type="sphere" size="0.03" rgba="0.2 0.2 0.2 1"/>
+
+      <!-- Swing arm / rope, free to rotate about the Y axis. Called "rope"
+           in conversation/comments per the user's preference, though the
+           body/joint names stay swing_arm/swing_hinge for continuity with
+           swing_env.py, which reads these names directly. -->
+      <body name="swing_arm" pos="0 0 0">
+        <joint name="swing_hinge" type="hinge" axis="0 1 0" pos="0 0 0"
+               range="-165 165" damping="0.01"/>
+        <!-- ROPE_LENGTH = 2.25m -- midpoint of the user's stated 2.0-2.5m
+             range, not yet pinned to a final value. Easy one-number change
+             here (and the matching body pos two lines down, which MUST
+             move together -- the seat attaches at the rope's far end).
+             swing_env.py's self.arm_length (used in the reward's height
+             calculation) is kept in sync with this value -- if this
+             changes, that must change too. mass=0.5 explicit override --
+             default density on this thin a capsule was producing 1.6kg,
+             unrealistically heavy for an actual rope/chain and not
+             dynamically negligible at the end of a 2.25m arm. 0.5kg per
+             the user. -->
+        <geom type="capsule" fromto="0 0 0  0 0 -2.25" size="0.015"
+              rgba="0.3 0.3 0.3 1" mass="0.5"/>
+
+        <!-- Seat / upper-leg unit: ONE rigid body per the user ("think of
+             them as glued together"), attached RIGIDLY to the rope's end
+             -- no joint here at all, matching "the rope attaches to a seat
+             with no joint." This body's local origin IS the rope
+             attachment point. The hip (lean_hinge, below) and knee
+             (knee_hinge, below) live at opposite ends of this unit, NOT at
+             its origin -- the 0.06/0.14 split straddles the rope
+             attachment point rather than sitting to one side of it. -->
+        <body name="seat" pos="0 0 -2.25">
+          <!-- CORRECTED, in-line-with-rope -> perpendicular-to-rope: the
+               user caught this after the fact -- the seat/upper-leg unit
+               was described in text as attaching to the rope at an offset
+               point along ITS OWN length, but the geometry below had it
+               running along the SAME axis as the rope (local Z, straight
+               up/down), which is not what a real seat looks like. A seat
+               sits crosswise under the rope, not as a straight-line
+               continuation of it. Fixed by rotating this whole unit 90 deg
+               within the swing plane -- local Z -> local X. The rope still
+               hangs along Z (unaffected), and this body's own pos="0 0
+               -2.25" (the rope attachment point, set on the PARENT body
+               tag above) is unchanged; only the geom/children below it
+               are rotated. Visual/mass geom for the unit itself: spans
+               from the hip end (+0.06) to the knee end (-0.14), passing
+               through the rope attachment at its own local origin (0,0,0)
+               -- same offsets as before, just along a different axis.
+               mass=1.5 is a reasoned starting value, not derived from
+               anything -- represents the seat structure, rope-attachment
+               hardware, and (eventually) the hip servo's housing. Open to
+               change. -->
+          <geom type="capsule" fromto="0.06 0 0  -0.14 0 0" size="0.025"
+                rgba="0.5 0.4 0.3 1" mass="1.5"/>
+
+          <!-- Hip joint. pos="0 0 0" here is in the CHILD (torso) body's
+               own frame -- torso's body pos below (0.06 0 0) is what
+               actually places this hinge 0.06m from the rope attachment,
+               to one side (local +X, perpendicular to the rope -- see the
+               CORRECTED comment above; this used to say "toward the
+               pivot", which was only true under the old, incorrect
+               inline-with-rope orientation). Range/damping carried over
+               unchanged from the previous model -- the user's dimensions
+               didn't specify new values for these, and they deserve their
+               own re-examination now that the geometry itself is
+               confirmed (a past investigation found the old model's
+               -5/+80 range severely constrained one side of the pump;
+               that finding was measured against a differently-structured
+               geometry, so it may not transfer cleanly here -- worth
+               re-testing, not assumed to still hold). -->
+          <body name="torso" pos="0.06 0 0">
+            <joint name="lean_hinge" type="hinge" axis="0 1 0" pos="0 0 0"
+                   range="-5 80" damping="0.05"/>
+            <!-- Torso length 0.38m (lean_hinge to head), per the user.
+                 mass=3.0 is the user's own suggested starting value.
+                 Capsule instead of the old box -- radius 0.05 is a
+                 reasoned placeholder for torso thickness, not measured. -->
+            <geom type="capsule" fromto="0 0 0  0 0 0.38" size="0.05"
+                  rgba="0.8 0.2 0.2 1" mass="3.0"/>
+
+            <!-- Head: separate body per the user ("keep them separate but
+                 with a fixed hinge for now"), attached at torso's far end.
+                 MuJoCo won't accept a zero-width limited range (tried
+                 range="0 0", errors: "range[0] should be smaller than
+                 range[1]") so a real-but-locked joint isn't expressible as
+                 cleanly as hoped -- simplest correct option is no <joint>
+                 element at all for now, i.e. truly rigid, same as how the
+                 rest of this file treats any unarticulated connection.
+                 Adding real neck articulation later is still a small,
+                 well-scoped change (insert a <joint name="neck_hinge"
+                 type="hinge" .../> here with a real range) -- just not a
+                 zero-effort one-line toggle the way range="0 0" would have
+                 been. size 0.15m read as DIAMETER (radius 0.075) --
+                 human-head-scale, per the user's "doesn't matter except
+                 for representation." mass=0.4 is a small reasoned
+                 placeholder, not something the user specified -- the
+                 least-certain number in this file, easiest to ignore/zero
+                 out if it's not worth modeling separately from torso mass
+                 at all. -->
+            <body name="head" pos="0 0 0.38">
+              <geom name="head_geom" type="sphere" size="0.075"
+                    rgba="0.9 0.7 0.6 1" mass="0.4"/>
+            </body>
+          </body>
+
+          <!-- Knee joint, 0.14m from the rope attachment, on the opposite
+               side from the hip (local -X, same CORRECTED perpendicular
+               axis as the hip/seat geom above -- this used to say "away
+               from the pivot", which was only true under the old,
+               incorrect inline-with-rope orientation). Range/damping
+               carried over unchanged from the previous model for the same
+               reason as lean_hinge above -- not re-derived, flagged for
+               re-examination now that geometry is locked in. -->
+          <body name="lower_leg" pos="-0.14 0 0">
+            <!-- UPDATED, -60/+60 -> -60/+90, after the user asked to allow
+                 full extension. Zero here is NOT inline with the thigh --
+                 it's the shin hanging straight down, perpendicular to the
+                 horizontal thigh (verified directly against the compiled
+                 model: at knee=0 the shin tip sits at local (0,-0.30)
+                 relative to the knee, i.e. straight down). Negative angles
+                 swing the shin back toward the hip, tucking it under the
+                 seat (at -60, the shin tip lands almost directly below the
+                 hip); positive angles swing it away from the hip, toward
+                 full extension. +90 was chosen as "fully extended" per the
+                 user; -60 (unchanged) was already established as a
+                 reasonable tuck limit. -->
+            <joint name="knee_hinge" type="hinge" axis="0 1 0"
+                   range="-45 90" damping="0.2"/>
+            <!-- 5.9ae: lower limit -60 -> -45. The real knee mount binds at ~45 deg
+                 of tuck. Earlier -60 reasoning above is kept as history. -->
+            <!-- Lower leg length 0.30m (up from 0.12m in the previous
+                 model), per the user. Structural rod only -- default
+                 density, no explicit mass override, matching how this
+                 file treats connecting rods vs. the deliberate point
+                 masses. -->
+            <geom type="capsule" fromto="0 0 0  0 0 -0.30" size="0.02"
+                  rgba="0.3 0.3 0.3 1"/>
+            <!-- Leg mass: the user said "weight can be placed at any point
+                 on the leg" -- the position below (currently -0.30, the
+                 far end, matching the previous model's convention of an
+                 end-loaded mass, which maximizes lever arm per kg) is the
+                 one number to move to test that. mass UPDATED, 1.0 -> 1.5kg,
+                 per the user (the original 1.0 was judged too low). -->
+            <geom name="leg_mass" type="sphere" size="0.05" pos="0 0 -0.30"
+                  rgba="0.2 0.2 0.8 1" mass="1.5"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- forcerange values CAPPED (README 5.9ac), superseding the 5.9ab
+         full-torque update directly below: the real ordered STS3095-C001
+         servos are individually rated ~9.3 Nm (lean, single unit) / 18.6
+         Nm (knee, synchronized pair) -- see 5.9ab's math -- but running
+         training (and the real hardware) at that full rating was tried
+         directly and caused two consecutive real failures: first a severe
+         overshoot regression (peak angle 117-121 deg vs. the 67.5 deg
+         target), then, after several more training rounds reacting to
+         that overshoot penalty, a bootstrap-failure collapse (9-14 of 15
+         eval episodes failing to bootstrap the swing at all) that did not
+         self-correct across 3 further rounds -- a stall, not a transient
+         dip. Root cause: forcerange is a torque CEILING on this project's
+         PD position actuators, not a speed setting -- the old, lower
+         ceiling meant the controller was routinely saturation-limited
+         (see the old reasoning below), so the trained policy's action
+         outputs implicitly assumed that ceiling. Removing it let the same
+         commanded positions produce far more real torque and speed than
+         the policy was ever tuned against, which is what broke both the
+         overshoot behavior and (once the policy over-corrected against
+         that penalty) the delicate resonant-pumping capture basin this
+         project has separately diagnosed as fragile (5.9h).
+
+         Fix: cap forcerange back to the exact values the current lineage
+         was actually trained and validated against -- knee 5.4 Nm, lean
+         8.1 Nm (unchanged from the pre-5.9ab placeholder below) -- rather
+         than inventing new untested intermediate numbers. This is not
+         just a training-stability stopgap: the user separately confirmed
+         a preference for the resulting slower, less abrupt/"robotic"
+         motion this produces, so unlike a normal temporary derate, there
+         is no default plan to raise this back toward the servos' full
+         rating later -- it may simply stay here. REAL-WORLD ACTION
+         REQUIRED: forcerange in this file has no effect on the physical
+         servos on its own -- the deployed STS3095s need to be
+         firmware-limited (via their serial-bus torque/current-limit
+         register) to the same ~5.4/8.1 Nm ceiling for real behavior to
+         match what's trained here; this leaves generous headroom below
+         their ~9.3/18.6 Nm rating, which is also good practice for
+         thermal/longevity margin rather than running them at their stall
+         ceiling continuously. Mounting/power-supply consistency, the
+         actual reason STS3095 was chosen for all three positions, is
+         fully retained either way -- that benefit never depended on
+         using the servos' full torque rating.
+
+         PREVIOUS reasoning below (5.9ab, kept for history -- the
+         full-torque update this entry caps back down from):
+         forcerange values UPDATED (README 5.9ab) to reflect REAL ordered
+         hardware, superseding the placeholder reasoning further below:
+         Feetech STS3095-C001 (7.4V variant), 95 kgf-cm stall torque each
+         = ~9.3 Nm (95 * 0.0980665 kgf-cm->Nm conversion). User ordered
+         STS3095 for ALL THREE servo positions (1 lean/torso, 2 knee
+         synchronized pair) rather than mixed models -- a deliberate
+         tradeoff, not an oversight: knee ends up meaningfully overpowered
+         (18.6 Nm combined vs. the ~5.4 Nm this project found sufficient
+         there) in exchange for uniform mounting hardware and one shared
+         power-supply spec across every servo on the robot. lean_motor:
+         single unit, 9.3 Nm. knee_motor: synchronized pair, 2 * 9.3 =
+         18.6 Nm combined. kp=40 deliberately UNCHANGED throughout all of
+         this -- it's a simulation-tuned position-servo gain from testing
+         that gave clean tracking, not a value derived from any specific
+         real servo's own internal control loop, so a real hardware
+         choice doesn't change what it should be.
+
+         PREVIOUS reasoning below (kept for history -- describes the
+         placeholder these numbers replace, from before real parts were
+         ordered):
+         forcerange values below are grounded in real parts, not arbitrary:
+         Feetech's higher-torque STS3215 variant (C044) is ~2.69 Nm stall
+         torque each (27.4 kgf-cm), a genuine budget option discussed with
+         the user. A synchronized, mechanically-coupled PAIR of these
+         combines to roughly 5.4 Nm -- validated by direct simulation as
+         sufficient for knee, which only needed ~5 Nm to pump well. Lean
+         needed more (~8 Nm threshold below which it can't pump at all,
+         found via direct sweep) -- two of the same servo falls short
+         there, so this uses THREE (~8.1 Nm combined) as the lean
+         placeholder instead. Final servo count/model is still an open
+         decision on the user's end ("I'll stew on the servos") -- these
+         are reasoned interim values for training purposes, not a locked
+         hardware spec. kp=40 carried over from testing that gave clean
+         tracking; behavior at this lower forcerange is more
+         saturation-dominated than at the higher value it was tuned
+         against, which is realistic for actual torque-limited hardware,
+         not a modeling artifact to fix. -->
+    <position name="lean_motor" joint="lean_hinge" kp="40" dampratio="1"
+              forcerange="-8.1 8.1" ctrlrange="-0.0873 1.3963"/>
+    <!-- ctrlrange UPDATED to match knee_hinge's -60/+90 range above (was
+         -60/+60): -60 deg stays -1.0472 rad, +90 deg is 1.5708 rad. Kept in
+         radians, matching lean_motor's convention below, since MuJoCo
+         actuator ctrlrange isn't auto-converted by the compiler's angle
+         setting the way <joint range> is -- has to be hand-computed and
+         hand-updated any time the joint range changes, which is exactly
+         what this edit is doing. -->
+    <position name="knee_motor" joint="knee_hinge" kp="40" dampratio="1"
+              forcerange="-5.4 5.4" ctrlrange="-0.7854 1.5708"/>
+    <!-- 5.9ae: knee ctrlrange low end -1.0472 (-60 deg) -> -0.7854 (-45 deg),
+         matching the joint range change above (real hardware binds at ~45). -->
+  </actuator>
+
+  <sensor>
+    <jointpos name="swing_angle" joint="swing_hinge"/>
+    <jointvel name="swing_vel" joint="swing_hinge"/>
+    <jointpos name="lean_angle" joint="lean_hinge"/>
+    <jointvel name="lean_vel" joint="lean_hinge"/>
+    <jointpos name="knee_angle" joint="knee_hinge"/>
+    <jointvel name="knee_vel" joint="knee_hinge"/>
+  </sensor>
+</mujoco>

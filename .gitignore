@@ -1,0 +1,20 @@
+# local-only: training state, generated output, big/binary
+_local_archive/
+checkpoints/
+tb_logs/
+eval_logs/
+logs/
+node_modules/
+__pycache__/
+*.pyc
+*.bak*
+*.tmp
+.DS_Store
+# rollback/backup folders made by promote_checkpoint.py, archive_old_model.py, etc.
+pre_*/
+archive_*/
+# generated logs/scans
+evaluate_log*.csv
+checkpoint_scan*.csv
+knee45_scan.csv
+auto_train_run.log
