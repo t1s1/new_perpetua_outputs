@@ -839,6 +839,26 @@ Not verified: all STS register addresses/units against real servos (`servo_check
 
 Nothing was deleted: obsolete material was MOVED to `_local_archive/` (git-ignored; `MANIFEST.txt` lists every file in it): the `_*.py` one-off scratch scripts and `eval_candidate*.py`, old data/logs (coldstart/arm-length/ramp jsons, `checkpoint_scan*.csv`, `evaluate_log` backups and `_before_promotion_` archives, torque-sweep logs, `eval_logs/`, `test/`), old model files (`swing_robot_draft.xml`, `swing_robot_OLD_inline_for_comparison.xml`, the pre-logstd-reset policy zip) and every `archive_*` / `pre_*` / `action_rate_*_backup` rollback folder (including `pre_knee45_backup_20261029T130428/` and `pre_promotion_29756816_backup/` -- the rollbacks for the knee -45 fine-tune; earlier README sections still mention these by their old location). `servo_shopping_requirements.docx/.pdf` and `build_servo_doc.js` moved to `docs/` (the docx still lists the old STS3215 placeholders). Left in place but git-ignored because training reads/writes them: `checkpoints/`, `tb_logs/`, `evaluate_log.csv`. Tracked: the scripts above, `swing_robot.xml`, `best_model/`, `swing_policy.zip`, `vec_normalize.pkl`, `pi/`, `docs/`, `README.md`. New `.gitignore` also covers the `pre_*/` and `archive_*/` folders the promote/archive scripts create.
 
+### 5.9ag Acceptable rope length for the trained policy, no retraining (`investigate_rope_length.py`)
+
+Question: the real rope (pivot -> seat attachment) is anywhere in 2.0-2.5 m; the policy was trained at exactly 2.25 m. Tested the deployed pipeline (`pi/`: self-excited start, handover at 10 deg, `policy.npz`, drift on) from dead rest, disturbances off, 360 s, one seed per length; rope, seat attachment and pivot height moved together (pivot kept L + 0.75 m above ground so the seat stays clear), rope mass left at 0.5 kg. Columns: handover to policy / first time the recent peak reached 55 deg / largest angle / mean 5 s-peak amplitude over the last 100 s (target 62.5, overshoot cap 75):
+
+| L (m) | handover | reach 55 | max | last-100 s amplitude |
+|---|---|---|---|---|
+| 1.5 | 18 s | never | 26.3 | 25.8 |
+| 1.6 | 21 s | 87 s | 78.9 | 78.6 |
+| 1.75 | 25 s | 70 s | 77.2 | 76.6 |
+| 1.9 | 32 s | 75 s | 75.5 | 74.8 |
+| 2.0 | 35 s | 74 s | 74.5 | 73.8 |
+| 2.25 | 47 s | 99 s | 72.8 | 72.1 |
+| 2.5 | 62 s | 132 s | 71.0 | 70.7 |
+| 2.75 | 79 s | 177 s | 69.3 | 68.8 |
+| 3.0 | 100 s | 237 s | 66.3 | 65.5 |
+| 3.5 | never | never | 1.2 | 0.5 |
+| 4.0 | never | never | 0.5 | 0.4 |
+
+Reading: the whole 2.0-2.5 m range works, and works at about the trained amplitude (74 -> 71 deg); a longer rope builds up more slowly and settles lower, a shorter one faster and higher. The policy keeps working to about 1.9 m (shorter ropes overshoot the 75 deg cap: 76.6 at 1.75, 78.6 at 1.6; at 1.5 it fails to build) and to about 3.0 m (amplitude 65.5, still above the 62.5 target, but 4 min to build). At 3.5 m and 4.0 m it never starts -- that is the self-excited START routine (tuned at 2.25) failing to reach its 10 deg handover, not necessarily the policy; the policy alone at those lengths was not tested. Caveats: one seed per length; real rope also changes the 0.5 kg mass and stretch; perfect gyro bias assumed.
+
 ## 8. Glossary
 
 Terms used throughout this doc without re-explaining every time, grouped by where they come from rather than alphabetically, since the grouping is itself useful context. Not exhaustive — just the recurring/load-bearing ones.
