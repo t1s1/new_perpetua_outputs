@@ -6,7 +6,7 @@ swing + = swinging in the direction the rider faces; angles in the sim's degrees
 """
 
 # ---- servo bus (FE-URT-1 adapter) ----
-SERIAL_PORT = "/dev/ttyUSB0"      # SET ME: `ls /dev/ttyUSB*` on the Pi
+SERIAL_PORT = "/dev/ttyACM0"      # SET ME: `ls /dev/ttyUSB*` on the Pi
 BAUDRATE = 1_000_000
 ID_LEAN = 1                       # SET ME: the IDs you assigned in MotorLab
 ID_KNEE_A = 2                     # SET ME: the two knees are interchangeable
@@ -22,14 +22,14 @@ KNEE_RANGE_DEG = (-45.0, 90.0)    # trained ctrlrange after the 5.9ae change
 
 # ---- servo settings written at every start (RAM, so they must be re-sent after each power-up) ----
 TORQUE_LIMIT_LEAN = 870           # raw 0-1000 = 0-100% of stall; ~8.1 N*m cap at 7.4 V
-TORQUE_LIMIT_KNEE = 290           # each knee; two servos share the ~5.4 N*m cap
+TORQUE_LIMIT_KNEE = 600           # each knee (~5.6 N*m). Was 290 (the sim's 5.4 N*m split over two servos), but the loaded knee could not lift the leg quickly at 290; 600 from the loaded step tests (README 5.9ai); sim check: peak 76.6 -> ~80 deg, no collapse
 SERVO_SPEED = 3000                # raw steps/s; above the rated no-load speed, so effectively "max"
 SERVO_ACC = 150                   # 0-254, units of 100 steps/s^2; lower = gentler/less robotic. TUNE.
 
 # ---- IMU (MPU-6050 / GY-521 on I2C bus 1) ----
 IMU_ADDR = 0x68
 GYRO_AXIS = "y"                   # sensor axis along the hinge (rider's right), per README mounting note
-GYRO_SIGN = +1                    # SET ME after the bench sign check: +1 if forward swing gives + rate
+GYRO_SIGN = +1                    # CONFIRMED by the bench rock test: front-edge-up (forward swing) reads + on the Y gyro
 GYRO_BIAS_CAL_S = 3.0             # still-hang time at start used to measure gyro bias
 
 # ---- control loop ----
@@ -61,5 +61,6 @@ FAST_FAULT_S = 30.0
 BOOT_ENABLE = True                # self-excited start: lean follows the swing velocity until the swing is big enough
 BOOT_HYST_DPS = 0.5               # swing rate must pass +/- this to flip the lean (noise std is ~0.03 dps; 1 dps worked in the sim, 2.9 dps did not)
 BOOT_AMP = 0.6                    # lean action amplitude during the bootstrap (1.0 = full travel; 0.35 also works, slower)
+BOOT_STALL_S = 3.0                # no swing-rate crossing for this long -> flip the lean anyway (some mass combinations never cross on their own)
 BOOT_HANDOVER_DEG = 10.0          # hand control to the policy once the swing has reached this
 BOOT_TIMEOUT_S = 150.0            # not there by now -> fault. Most likely a wrong GYRO_SIGN or a stuck joint.

@@ -8,7 +8,7 @@ mistakes before any hardware is involved. Run from the PROJECT ROOT:
 The "sensors" it feeds the controller are deliberately hardware-like: gyro =
 true swing rate + a constant bias, swing angle only from integrating that
 gyro, joint angles quantized to servo counts (and commands quantized the same
-way), joint velocity by finite difference. Compare the printed peak/steady
+way), joint velocity by finite difference. Optional env vars RATE_LEAN / RATE_KNEE (deg/s) slew-limit the commands to mimic slower real servos. Compare the printed peak/steady
 angle with evaluate.py's (about 74 deg peak, reward ~9-10k).
 """
 import os
@@ -31,7 +31,16 @@ bias_dps = float(sys.argv[3]) if len(sys.argv) > 3 else 0.05
 if len(sys.argv) > 5:
     C.JOINT_VEL_EMA = float(sys.argv[5])
 
-env = SwingEnv(episode_seconds=secs + 10)
+_xml = "swing_robot.xml"
+if os.environ.get("KNEE_FORCE"):        # try a different knee torque cap (N*m) than the trained 5.4
+    import tempfile
+    _t = open("swing_robot.xml").read()
+    assert _t.count('forcerange="-5.4 5.4"') == 1
+    _f = os.environ["KNEE_FORCE"]
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False, dir="/tmp") as _fh:
+        _fh.write(_t.replace('forcerange="-5.4 5.4"', f'forcerange="-{_f} {_f}"'))
+        _xml = _fh.name
+env = SwingEnv(xml_path=_xml, episode_seconds=secs + 10)
 obs, _ = env.reset(seed=1)
 import mujoco
 env.data.qvel[env.swing_dof] = 0.0       # dead rest, no seed kick
@@ -47,6 +56,9 @@ true_bias = np.deg2rad(bias_dps)
 est.bias = true_bias - np.deg2rad(float(os.environ.get('RESID_DPS', '0')))           # as if a perfect still-hang calibration; residual drift is not modeled here
 
 EXACT = len(sys.argv) > 4 and sys.argv[4] == 'exact'
+RATE_LEAN = float(os.environ.get('RATE_LEAN', '0'))   # deg/s servo speed limit (0 = unlimited)
+RATE_KNEE = float(os.environ.get('RATE_KNEE', '0'))
+lean_pos = knee_pos = 0.0
 lean_rng, knee_rng = C.LEAN_RANGE_DEG, C.KNEE_RANGE_DEG
 peak = 0.0
 tr = []
@@ -61,6 +73,10 @@ for k in range(int(secs / dt)):
     out = ctl.step(gyro, S.raw_to_lean_deg(lean_raw), S.raw_to_knee_deg(knee_raw), S.raw_to_knee_deg(knee_raw))
     lean_cmd = S.raw_to_lean_deg(S.lean_deg_to_raw(out["lean"]))
     knee_cmd = 0.5 * (S.raw_to_knee_deg(S.knee_deg_to_raw(out["knee_a"])) + S.raw_to_knee_deg(S.knee_deg_to_raw(out["knee_b"])))
+    if RATE_LEAN:
+        lean_pos += float(np.clip(lean_cmd - lean_pos, -RATE_LEAN * dt, RATE_LEAN * dt)); lean_cmd = lean_pos
+    if RATE_KNEE:
+        knee_pos += float(np.clip(knee_cmd - knee_pos, -RATE_KNEE * dt, RATE_KNEE * dt)); knee_cmd = knee_pos
     a = np.array([2 * (lean_cmd - lean_rng[0]) / (lean_rng[1] - lean_rng[0]) - 1,
                   2 * (knee_cmd - knee_rng[0]) / (knee_rng[1] - knee_rng[0]) - 1], dtype=np.float32)
     err.append(np.rad2deg(est.angle) - np.rad2deg(true_now))

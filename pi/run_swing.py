@@ -18,6 +18,7 @@ Logs to logs/run_<timestamp>.csv. Auto-start at power-up is not set up yet.
 import argparse
 import csv
 import os
+import signal
 import sys
 import time
 
@@ -156,6 +157,9 @@ def main():
     ap.add_argument("--policy", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy.npz"))
     args = ap.parse_args()
     dry = args.dry_run
+    # a dropped SSH session (SIGHUP) or `kill` (SIGTERM) should relax the servos like Ctrl+C does
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     bus, imu = ServoBus(IDS), Imu()
     os.makedirs("logs", exist_ok=True)

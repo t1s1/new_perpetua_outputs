@@ -14,7 +14,8 @@ import config as C
 try:
     from scservo_sdk import (COMM_SUCCESS, GroupSyncRead, GroupSyncWrite,
                              PacketHandler, PortHandler)
-except ImportError:                       # lets swing_core / sim_test run on a dev machine
+except ImportError as _e:                 # lets swing_core / sim_test run on a dev machine
+    _IMPORT_ERROR = _e
     PortHandler = PacketHandler = GroupSyncRead = GroupSyncWrite = None
     COMM_SUCCESS = 0
 
@@ -44,7 +45,8 @@ class BusError(Exception):
 class ServoBus:
     def __init__(self, ids, port=None, baud=None):
         if PortHandler is None:
-            raise RuntimeError("pip install feetech-servo-sdk pyserial")
+            raise RuntimeError(f"servo library not importable ({_IMPORT_ERROR!r}). Is the virtual environment active "
+                               f"(source ~/swing-env/bin/activate)? Otherwise: pip install feetech-servo-sdk pyserial")
         self.ids = list(ids)
         self.port = PortHandler(port or C.SERIAL_PORT)
         if not self.port.openPort():
@@ -60,6 +62,12 @@ class ServoBus:
     def ping(self, i):
         model, res, err = self.ph.ping(self.port, i)
         return (model if res == COMM_SUCCESS else None)
+
+    def ping_result(self, i):
+        """(model number or None, comm result code, text). Codes: 0 ok, -6 timeout (nobody answered),
+        -7 corrupt reply (often two servos answering at once = duplicate ID), -3 rx fail."""
+        model, res, err = self.ph.ping(self.port, i)
+        return (model if res == COMM_SUCCESS else None), res, self.ph.getTxRxResult(res)
 
     def write1(self, i, addr, v):
         res, err = self.ph.write1ByteTxRx(self.port, i, addr, int(v))

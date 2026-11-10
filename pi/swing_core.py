@@ -109,6 +109,7 @@ class SwingController:
         self.mode = "BOOT" if C.BOOT_ENABLE else "POLICY"
         self.t, self.peak_deg, self.boot_state = 0.0, 0.0, -1.0
         self.hold_s = 0.0
+        self._since_flip = 0.0
         self._win = []            # recent |swing| samples for the windowed peak
         self.finished = False     # True once HOLD_SECONDS have been spent at target
 
@@ -144,10 +145,13 @@ class SwingController:
         obs = [swing, swing_vel, np.deg2rad(lean_deg), np.deg2rad(self.vel[0]), np.deg2rad(knee), np.deg2rad(self.vel[1])]
         if self.mode == "BOOT":
             h = np.deg2rad(C.BOOT_HYST_DPS)       # Schmitt trigger: only flip when the rate is clearly one way
-            if swing_vel > h:
-                self.boot_state = 1.0
-            elif swing_vel < -h:
-                self.boot_state = -1.0
+            self._since_flip += self.dt
+            if swing_vel > h and self.boot_state < 0 or swing_vel < -h and self.boot_state > 0:
+                self.boot_state = -self.boot_state
+                self._since_flip = 0.0
+            elif self._since_flip > C.BOOT_STALL_S:      # stalled: nothing to follow, so wiggle
+                self.boot_state = -self.boot_state
+                self._since_flip = 0.0
             a = np.array([C.BOOT_AMP * self.boot_state, 0.0])
         else:
             a = self.policy.act(obs)
